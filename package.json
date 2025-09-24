@@ -1,0 +1,11 @@
+{
+  "name": "llm-functions",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "./start-deno.sh",
+    "deploy": "./deploy.sh"
+  },
+  "dependencies": {
+    "deno": "^2.5.1"
+  }
+}

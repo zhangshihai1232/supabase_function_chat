@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
+    "https://deno.land/x/xhr@0.3.0/mod.ts": "https://deno.land/x/xhr@0.3.0/mod.ts",
+    "dotenv": "https://deno.land/x/dotenv@v3.2.2/mod.ts"
+  }
+}
+
+
+

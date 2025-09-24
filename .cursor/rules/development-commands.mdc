@@ -1,0 +1,117 @@
+---
+description: 开发命令和脚本指南
+alwaysApply: true
+---
+
+# 开发命令指南
+
+## 🚀 启动服务
+
+### 本地开发（推荐）
+```bash
+# 方式 1：直接运行脚本
+./start-deno.sh
+
+# 方式 2：使用 npm script
+npm run dev
+
+# 方式 3：使用 deno script
+npm run deno
+```
+
+这些命令都会：
+- 自动检查并安装 Deno（如果需要）
+- 检查端口占用并自动清理
+- 启动带热重载的开发服务器
+- 加载 `.env` 环境变量（如果存在）
+
+### 生产环境（仅在部署时使用）
+```bash
+# ❌ 本地测试时不要使用
+./start-functions.sh
+npm run start
+```
+
+## 🛠️ 开发工具
+
+### Deno 相关命令
+```bash
+# 检查 Deno 版本
+deno --version
+
+# 格式化代码
+deno fmt
+
+# 类型检查
+deno check supabase/functions/chat/index.ts
+
+# 运行测试
+deno test
+
+# 安装/更新 Deno
+curl -fsSL https://deno.land/x/install/install.sh | sh
+```
+
+### 调试模式
+```bash
+# 启动调试模式
+deno run --inspect-brk --allow-all supabase/functions/chat/index.ts
+
+# 然后在 Chrome 中打开：chrome://inspect
+```
+
+## 🔧 环境配置
+
+### 环境变量设置
+创建 `.env` 文件：
+```bash
+# .env 示例
+PORT=8000
+GEMINI_API_KEY=your_api_key_here
+```
+
+### PATH 配置
+确保 Deno 在你的 PATH 中：
+```bash
+# 添加到你的 shell 配置文件 (.bashrc, .zshrc 等)
+export PATH="$HOME/.deno/bin:$PATH"
+```
+
+## 🐛 故障排除
+
+### 端口被占用
+[start-deno.sh](mdc:start-deno.sh) 会自动处理，但如果需要手动检查：
+```bash
+# 查看端口占用
+lsof -i :8000
+
+# 杀死占用进程
+kill -9 $(lsof -ti:8000)
+```
+
+### Deno 权限问题
+确保运行时有足够权限：
+```bash
+deno run --allow-net --allow-env --allow-read your-script.ts
+```
+
+### 模块导入问题
+清理 Deno 缓存：
+```bash
+deno cache --reload supabase/functions/chat/index.ts
+```
+
+## 📝 日常开发流程
+
+1. **启动服务**: `./start-deno.sh`
+2. **修改代码**: 编辑 `.ts` 文件，自动热重载
+3. **测试 API**: 访问 `http://localhost:8000`
+4. **调试**: 查看控制台输出或使用调试器
+5. **提交代码**: 使用 `deno fmt` 格式化代码
+
+## 🔍 常用端点
+
+本地服务运行后可访问：
+- **健康检查**: `GET http://localhost:8000/health`
+- **聊天 API**: `POST http://localhost:8000/chat`
+- **其他端点**: 查看 [oak-router.ts](mdc:supabase/functions/chat/oak-router.ts)
