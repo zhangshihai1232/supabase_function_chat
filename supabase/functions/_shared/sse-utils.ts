@@ -3,6 +3,8 @@
  * 提供流式响应功能，让客户端可以实时接收 AI 生成的内容
  */
 
+import { getLogger, LogEventType } from './logger.ts';
+
 /**
  * SSE 消息类型枚举
  * 定义不同类型的服务器推送消息
@@ -43,6 +45,11 @@ export class SSEStream {
   private encoder = new TextEncoder();
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   private isClosed = false;
+  private requestId: string;
+
+  constructor(requestId: string = 'sse_stream') {
+    this.requestId = requestId;
+  }
 
   /**
    * 创建可读流对象
@@ -51,21 +58,16 @@ export class SSEStream {
    * @returns ReadableStream<Uint8Array> 可读的字节流
    */
   createStream(): ReadableStream<Uint8Array> {
+    const logger = getLogger();
+    
     return new ReadableStream({
       start: (controller) => {
         this.controller = controller;
-        console.log('SSE 流已启动');
-        
-        // 发送初始连接消息
-        this.sendMessage({
-          type: SSEMessageType.START,
-          data: '连接已建立，开始处理请求...',
-          id: Date.now().toString()
-        });
+        logger.info(this.requestId, LogEventType.SSE_STREAM_START, 'SSE 流已启动', null, 'SSE流启动');
       },
       
       cancel: () => {
-        console.log('SSE 流被客户端取消');
+        logger.info(this.requestId, LogEventType.SSE_STREAM_CLOSE, 'SSE 流被客户端取消', null, 'SSE流取消');
         this.close();
       }
     });
@@ -77,8 +79,12 @@ export class SSEStream {
    * @param message SSE 消息对象
    */
   sendMessage(message: SSEMessage): void {
+    // 首先检查流状态，如果已关闭则直接返回
     if (this.isClosed || !this.controller) {
-      console.warn('尝试向已关闭的 SSE 流发送消息');
+      // 只对非done消息显示警告，done消息在流关闭时是正常的
+      if (message.type !== SSEMessageType.DONE) {
+        console.warn(`SSE流已关闭，无法发送消息 [${message.type}]`);
+      }
       return;
     }
 
@@ -96,13 +102,9 @@ export class SSEStream {
       
       // 添加数据内容
       if (message.data !== undefined) {
-        console.log(`🔍 SSE发送消息类型: ${message.type}, 数据类型: ${typeof message.data}, 数据值:`, message.data);
-        
         const dataString = typeof message.data === 'string' 
           ? message.data 
           : JSON.stringify(message.data);
-        
-        console.log(`🔍 SSE最终发送的字符串:`, dataString);
         
         // 处理多行数据，每行都需要 "data: " 前缀
         const lines = dataString.split('\n');
@@ -123,11 +125,26 @@ export class SSEStream {
       const encodedData = this.encoder.encode(sseData);
       this.controller.enqueue(encodedData);
       
-      console.log(`发送 SSE 消息: ${message.type}`);
+      // 简单的成功日志，避免复杂的日志调用
+      console.log(`✅ SSE消息已发送: ${message.type}`);
       
     } catch (error) {
-      console.error('发送 SSE 消息时出错:', error);
-      this.sendError('消息发送失败');
+      // 发生错误时立即关闭流，避免无限递归
+      console.error(`❌ SSE消息发送失败 [${message.type}]:`, error instanceof Error ? error.message : error);
+      
+      // 标记为已关闭，防止进一步的操作
+      this.isClosed = true;
+      
+      // 尝试关闭controller，但不调用this.close()避免递归
+      if (this.controller) {
+        try {
+          this.controller.close();
+        } catch (closeError) {
+          console.error('关闭SSE控制器失败:', closeError instanceof Error ? closeError.message : closeError);
+        } finally {
+          this.controller = null;
+        }
+      }
     }
   }
 
@@ -152,18 +169,42 @@ export class SSEStream {
    * @param error 错误信息或错误对象
    */
   sendError(error: string | Error): void {
+    // 检查流状态，避免向已关闭的流发送消息
+    if (this.isClosed || !this.controller) {
+      console.error('SSE流已关闭，无法发送错误消息:', error instanceof Error ? error.message : error);
+      return;
+    }
+
     const errorMessage = error instanceof Error ? error.message : error;
     
-    this.sendMessage({
-      type: SSEMessageType.ERROR,
-      data: { 
-        error: errorMessage,
-        timestamp: new Date().toISOString()
-      },
-      id: Date.now().toString()
-    });
-    
-    console.error('SSE 流发送错误:', errorMessage);
+    try {
+      // 直接构建错误消息，避免通过sendMessage可能的递归
+      const errorData = this.encoder.encode(
+        `event: error\n` +
+        `data: ${JSON.stringify({ 
+          error: errorMessage,
+          timestamp: new Date().toISOString()
+        })}\n` +
+        `id: ${Date.now()}\n\n`
+      );
+      
+      this.controller.enqueue(errorData);
+      console.error('❌ SSE错误消息已发送:', errorMessage);
+    } catch (sendError) {
+      console.error('❌ 发送SSE错误消息失败:', sendError instanceof Error ? sendError.message : sendError);
+      
+      // 发送错误消息失败，立即标记为关闭并清理
+      this.isClosed = true;
+      if (this.controller) {
+        try {
+          this.controller.close();
+        } catch (closeError) {
+          // 忽略关闭时的错误
+        } finally {
+          this.controller = null;
+        }
+      }
+    }
   }
 
   /**
@@ -200,13 +241,29 @@ export class SSEStream {
    * 关闭 SSE 流
    */
   close(): void {
-    if (!this.isClosed && this.controller) {
+    if (this.isClosed) {
+      return; // 已经关闭，避免重复操作
+    }
+
+    this.isClosed = true; // 先标记为已关闭
+    
+    if (this.controller) {
       try {
-        this.controller.close();
-        this.isClosed = true;
-        console.log('SSE 流已关闭');
+        // 检查controller是否还处于可操作状态
+        if (this.controller.desiredSize !== null) {
+          this.controller.close();
+          console.log('SSE 流已关闭');
+        } else {
+          console.log('SSE 流已被客户端关闭');
+        }
       } catch (error) {
-        console.error('关闭 SSE 流时出错:', error);
+        // 静默处理关闭错误，避免在客户端断开时产生噪音
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (!errorMsg.includes('cannot close or enqueue')) {
+          console.error('关闭 SSE 流时出错:', errorMsg);
+        }
+      } finally {
+        this.controller = null; // 清除引用
       }
     }
   }

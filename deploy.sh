@@ -133,6 +133,23 @@ deploy_functions() {
     log_info "执行部署命令..."
     if supabase functions deploy --no-verify-jwt; then
         log_success "所有 Edge Functions 部署成功!"
+        
+        # 设置环境变量
+        log_info "设置远端环境变量..."
+        if [ -f ".env" ]; then
+            while IFS='=' read -r key value; do
+                # 跳过空行和注释
+                if [[ -n "$key" && ! "$key" =~ ^[[:space:]]*# ]]; then
+                    # 移除可能的引号
+                    value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
+                    if supabase secrets set "$key=$value" --project-ref "$SUPABASE_PROJECT_REF" 2>/dev/null; then
+                        log_success "设置环境变量: $key"
+                    else
+                        log_warning "设置环境变量失败: $key"
+                    fi
+                fi
+            done < .env
+        fi
     else
         log_error "部署失败"
         exit 1

@@ -4,6 +4,7 @@
  */
 
 import type { ChatMessage, GeminiConfig } from './types.ts';
+import { getLogger, LogEventType } from './logger.ts';
 
 /**
  * Gemini API 响应接口
@@ -64,23 +65,41 @@ export class GeminiClient {
    * 
    * @param message 用户输入的消息
    * @param conversationHistory 对话历史记录（可选）
+   * @param requestId 请求ID（用于日志关联）
    * @returns Promise<string> AI 生成的回复文本
    */
-  async chat(message: string, conversationHistory?: ChatMessage[]): Promise<string> {
+  async chat(message: string, conversationHistory?: ChatMessage[], requestId?: string): Promise<string> {
+    const logger = getLogger();
+    const logRequestId = requestId || 'gemini_standalone';
+    
     try {
-      console.log('开始调用 Gemini API...');
-      console.log('用户消息:', message);
+      logger.info(logRequestId, LogEventType.AI_REQUEST_START, '开始调用 Gemini API', {
+        messageLength: message.length,
+        hasHistory: !!conversationHistory?.length,
+        model: this.config.model,
+        userMessage: message, // 添加用户消息内容
+        conversationHistory: conversationHistory || [] // 添加对话历史
+      }, 'AI调用开始');
       
       // 步骤1: 构建请求体
+      logger.info(logRequestId, LogEventType.AI_REQUEST_SEND, '构建API请求体', null, '请求构建');
       const requestBody = this.buildRequestBody(message, conversationHistory);
+      
+      logger.info(logRequestId, LogEventType.AI_REQUEST_SEND, 'API请求体构建完成', {
+        requestBody: requestBody // 添加完整的API请求体
+      }, 'API请求体');
       
       // 步骤2: 构建 API 请求 URL
       const apiUrl = `${this.baseUrl}/${this.config.model}:generateContent?key=${this.config.apiKey}`;
       
       // 步骤3: 发送 HTTP 请求
-      console.log('发送请求到 Gemini API...');
-      console.log('Request URL:', apiUrl);
-      console.log('Request Body:', JSON.stringify(requestBody, null, 2));
+      logger.info(logRequestId, LogEventType.AI_REQUEST_SEND, '发送请求到 Gemini API', {
+        url: apiUrl.replace(/key=.+/, 'key=***'),
+        model: this.config.model,
+        temperature: this.config.temperature,
+        maxTokens: this.config.maxTokens
+      }, 'API请求');
+      
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -92,22 +111,39 @@ export class GeminiClient {
       // 步骤4: 检查响应状态
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Gemini API 请求失败:', response.status, errorText);
+        logger.error(logRequestId, LogEventType.ERROR_OCCURRED, 'Gemini API 请求失败', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText: errorText.substring(0, 500)
+        }, 'API错误');
         throw new Error(`Gemini API 错误 (${response.status}): ${errorText}`);
       }
 
       // 步骤5: 解析响应 JSON
+      logger.info(logRequestId, LogEventType.AI_RESPONSE_RECEIVED, '收到 Gemini API 响应', {
+        status: response.status,
+        contentType: response.headers.get('content-type')
+      }, 'API响应');
+      
       const data: GeminiResponse = await response.json();
-      console.log('收到 Gemini API 响应');
 
       // 步骤6: 提取生成的文本
+      logger.info(logRequestId, LogEventType.AI_RESPONSE_PARSE, '解析AI响应内容', null, '响应解析');
       const generatedText = this.extractTextFromResponse(data);
       
-      console.log('AI 回复:', generatedText);
+      logger.success(logRequestId, LogEventType.AI_RESPONSE_PARSE, `AI 回复解析完成，长度: ${generatedText.length}`, {
+        responseLength: generatedText.length,
+        candidatesCount: data.candidates?.length,
+        responseContent: generatedText // 添加实际响应内容
+      }, 'AI完成');
+      
       return generatedText;
 
     } catch (error) {
-      console.error('Gemini API 调用失败:', error);
+      logger.error(logRequestId, LogEventType.ERROR_OCCURRED, 'Gemini API 调用失败', {
+        error: error instanceof Error ? error.stack : error,
+        message: message.substring(0, 100)
+      }, 'AI调用失败');
       
       // 返回友好的错误消息
       if (error instanceof Error) {
@@ -226,10 +262,11 @@ export class GeminiClient {
    * 
    * @param message 用户消息
    * @param conversationHistory 对话历史
+   * @param requestId 请求ID
    * @returns Promise<string> AI 回复
    */
-  async generateResponse(message: string, conversationHistory?: ChatMessage[]): Promise<string> {
-    return this.chat(message, conversationHistory);
+  async generateResponse(message: string, conversationHistory?: ChatMessage[], requestId?: string): Promise<string> {
+    return this.chat(message, conversationHistory, requestId);
   }
 
   /**
@@ -237,20 +274,37 @@ export class GeminiClient {
    * 
    * @param message 用户消息
    * @param conversationHistory 对话历史
+   * @param requestId 请求ID
    * @returns AsyncGenerator<string> 流式响应生成器
    */
-  async* generateStreamingResponse(message: string, conversationHistory?: ChatMessage[]): AsyncGenerator<string> {
+  async* generateStreamingResponse(message: string, conversationHistory?: ChatMessage[], requestId?: string): AsyncGenerator<string> {
+    const logger = getLogger();
+    const logRequestId = requestId || 'gemini_streaming';
+    
     try {
-      console.log('开始流式调用 Gemini API...');
-      console.log('用户消息:', message);
+      logger.info(logRequestId, LogEventType.AI_STREAMING_START, '开始流式调用 Gemini API', {
+        messageLength: message.length,
+        hasHistory: !!conversationHistory?.length,
+        model: this.config.model,
+        userMessage: message, // 添加用户消息内容
+        conversationHistory: conversationHistory || [] // 添加对话历史
+      }, '流式AI开始');
       
       // 构建请求体
       const requestBody = this.buildRequestBody(message, conversationHistory);
       
+      logger.info(logRequestId, LogEventType.AI_REQUEST_SEND, '流式API请求体构建完成', {
+        requestBody: requestBody // 添加完整的API请求体
+      }, '流式API请求体');
+      
       // 构建流式 API 请求 URL
       const apiUrl = `${this.baseUrl}/${this.config.model}:streamGenerateContent?key=${this.config.apiKey}`;
       
-      console.log('发送流式请求到 Gemini API...');
+      logger.info(logRequestId, LogEventType.AI_REQUEST_SEND, '发送流式请求到 Gemini API', {
+        url: apiUrl.replace(/key=.+/, 'key=***'),
+        streaming: true
+      }, '流式请求');
+      
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -261,13 +315,20 @@ export class GeminiClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Gemini API 流式请求失败:', response.status, errorText);
+        logger.error(logRequestId, LogEventType.ERROR_OCCURRED, 'Gemini API 流式请求失败', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText: errorText.substring(0, 500)
+        }, '流式API错误');
         throw new Error(`Gemini API 错误 (${response.status}): ${errorText}`);
       }
 
       if (!response.body) {
+        logger.error(logRequestId, LogEventType.ERROR_OCCURRED, '响应体为空', null, '响应错误');
         throw new Error('响应体为空');
       }
+
+      logger.info(logRequestId, LogEventType.AI_RESPONSE_RECEIVED, '开始接收流式响应', null, '流式响应');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -427,7 +488,7 @@ export function createGeminiClient(): GeminiClient {
   // 创建配置对象
   const config: GeminiConfig = {
     apiKey: apiKey,
-    model: Deno.env.get('GEMINI_MODEL')?.toLowerCase() || 'gemini-pro',
+    model: Deno.env.get('GEMINI_MODEL') || 'gemini-pro',
     temperature: parseFloat(Deno.env.get('GEMINI_TEMPERATURE') || '0.7'),
     maxTokens: parseInt(Deno.env.get('GEMINI_MAX_TOKENS') || '2048'),
   };

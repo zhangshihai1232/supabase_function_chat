@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.7",
+    "https://deno.land/x/xhr@0.3.0/mod.ts": "https://deno.land/x/xhr@0.3.0/mod.ts"
+  }
+}
